@@ -206,6 +206,7 @@ public class GroupPagerSnapHelper extends SnapHelper {
                         mScrolled = false;
                         snapToTargetExistingView();
                         updateAndDispatchPageSelected(mRecyclerView.getLayoutManager());
+                        updatePageScrolled(mRecyclerView.getLayoutManager(),0,0);
                     }
                 }
 
