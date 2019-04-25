@@ -15,16 +15,91 @@ import android.widget.Scroller;
 
 public class GroupPagerSnapHelper extends SnapHelper {
 
-    private int mGroupCapacity;
-
     static final float MILLISECONDS_PER_INCH = 100f;
 
     private static final int MAX_SCROLL_ON_FLING_DURATION = 100; // m
 
+
+    private int mGroupCapacity;
+
+    private int mMainAxisSize;
+
+    private int mCrossAxisSize;
+
+
+    ScrollEventAdapter mScrollEventAdapter;
+
     public GroupPagerSnapHelper(int groupCapacity) {
-        this.mGroupCapacity = groupCapacity;
+        this(groupCapacity, 1);
+    }
+
+    public GroupPagerSnapHelper(int mainAxisSize, int crossAxisSize) {
+        this.mGroupCapacity = mainAxisSize * crossAxisSize;
+        this.mMainAxisSize = mainAxisSize;
+        this.mCrossAxisSize = crossAxisSize;
+
         if (mGroupCapacity <= 0) {
             throw new IllegalArgumentException("Invalid groupCapacity value");
+        }
+
+        if (mMainAxisSize <= 0) {
+            throw new IllegalArgumentException("Invalid groupCapacity value");
+        }
+        if (mCrossAxisSize <= 0) {
+            throw new IllegalArgumentException("Invalid groupCapacity value");
+        }
+
+    }
+
+    public void addOnPageChangeCallback(OnPageChangeCallback onPageChangeCallback) {
+        getScrollEventAdapter();
+        this.mScrollEventAdapter.addOnPageChangeCallback(onPageChangeCallback);
+    }
+
+    public void removeOnPageChangeCallback(OnPageChangeCallback onPageChangeCallback) {
+        if (mScrollEventAdapter == null) {
+            return;
+        }
+        this.mScrollEventAdapter.removeOnPageChangeCallback(onPageChangeCallback);
+    }
+
+    public ScrollEventAdapter getScrollEventAdapter() {
+        if (mScrollEventAdapter == null) {
+            mScrollEventAdapter = new ScrollEventAdapter();
+        }
+        return mScrollEventAdapter;
+    }
+
+
+    private void updateAndDispatchPageSelected(final RecyclerView.LayoutManager layoutManager) {
+        if (mScrollEventAdapter != null) {
+            View snapView = findSnapView(layoutManager);
+            int position = -1;
+            if (snapView != null) {
+                position = balanceStartPosition(layoutManager, snapView) / mGroupCapacity;
+            }
+            if (position != -1) {
+                mScrollEventAdapter.dispatchPageSelected(position);
+            }
+
+        }
+    }
+
+    private void updatePageScrolled(final RecyclerView.LayoutManager layoutManager, int dx, int dy) {
+        if (mScrollEventAdapter != null) {
+            OrientationHelper orientationHelper = getOrientationHelper(layoutManager);
+            if (orientationHelper != null) {
+                View startView = findSnapView(layoutManager);
+                int childPosition = layoutManager.getPosition(startView);
+                int dOffset;
+                if (orientationHelper == mVerticalHelper) {
+                    dOffset = dy;
+                } else {
+                    dOffset = dx;
+                }
+                mScrollEventAdapter.updatePageScrolled(childPosition / mGroupCapacity, dOffset, orientationHelper.getDecoratedMeasurement(startView) * mMainAxisSize);
+            }
+
         }
     }
 
@@ -116,7 +191,7 @@ public class GroupPagerSnapHelper extends SnapHelper {
         } else {
             targetPosition -= (mGroupCapacity / 2 + 1);
         }
-        return getPagerStartPosition(layoutManager, targetPosition);
+        return getCurrentPagerStartPosition(layoutManager, targetPosition);
     }
 
 
@@ -130,6 +205,7 @@ public class GroupPagerSnapHelper extends SnapHelper {
                     if (newState == RecyclerView.SCROLL_STATE_IDLE && mScrolled) {
                         mScrolled = false;
                         snapToTargetExistingView();
+                        updateAndDispatchPageSelected(mRecyclerView.getLayoutManager());
                     }
                 }
 
@@ -137,7 +213,10 @@ public class GroupPagerSnapHelper extends SnapHelper {
                 public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
                     if (dx != 0 || dy != 0) {
                         mScrolled = true;
+                    } else {
+                        updateAndDispatchPageSelected(mRecyclerView.getLayoutManager());
                     }
+                    updatePageScrolled(mRecyclerView.getLayoutManager(), dx, dy);
                 }
             };
 
@@ -206,11 +285,15 @@ public class GroupPagerSnapHelper extends SnapHelper {
         if (snapView == null) {
             return;
         }
-        int snapViewPosition = layoutManager.getPosition(snapView);
-        int targetPosition = findCurrentPagerStartPosition(layoutManager, snapViewPosition);
-        View targetView = layoutManager.findViewByPosition(targetPosition);
-        if (targetView != null) {
-            snapView = targetView;
+        int targetPosition;
+        if (layoutManager.getPosition(snapView) % mGroupCapacity != 0) {
+            targetPosition = balanceStartPosition(layoutManager, snapView);
+            View targetView = layoutManager.findViewByPosition(targetPosition);
+            if (targetView != null) {
+                snapView = targetView;
+            }
+        } else {
+            targetPosition = layoutManager.getPosition(snapView);
         }
 
         if (layoutManager.getPosition(snapView) % mGroupCapacity == 0) {
@@ -285,6 +368,15 @@ public class GroupPagerSnapHelper extends SnapHelper {
         return null;
     }
 
+    private OrientationHelper getOrientationHelper(RecyclerView.LayoutManager layoutManager) {
+        if (layoutManager.canScrollVertically()) {
+            return getVerticalHelper(layoutManager);
+        } else if (layoutManager.canScrollHorizontally()) {
+            return getHorizontalHelper(layoutManager);
+        }
+        return null;
+    }
+
     private View findCenterView(RecyclerView.LayoutManager layoutManager,
                                 OrientationHelper helper) {
         int childCount = layoutManager.getChildCount();
@@ -346,23 +438,41 @@ public class GroupPagerSnapHelper extends SnapHelper {
     }
 
 
-    private int findCurrentPagerStartPosition(RecyclerView.LayoutManager layoutManager, int position) {
-        if (position >= layoutManager.getItemCount()) {
-            return layoutManager.getItemCount() - 1;
+    private int balanceStartPosition(RecyclerView.LayoutManager layoutManager, View view) {
+        int position = layoutManager.getPosition(view);
+        int itemCount = layoutManager.getItemCount();
+        if (position >= itemCount) {
+            return itemCount - 1;
         }
         if (position < 0) {
             return 0;
         }
-        if (position % mGroupCapacity >= mGroupCapacity / 2) {
-            return (position / mGroupCapacity + 1) * mGroupCapacity;
+        int absIndex = position / mCrossAxisSize % mMainAxisSize;
+        int midIndex = mMainAxisSize % 2 == 0 ? mMainAxisSize / 2 - 1 : mMainAxisSize / 2;
+        if (mMainAxisSize % 2 == 0 || (mMainAxisSize % 2 != 0 && absIndex != midIndex)) {
+            if (absIndex > midIndex) {
+                return (position / mGroupCapacity + 1) * mGroupCapacity;
+            } else {
+                return (position / mGroupCapacity) * mGroupCapacity;
+            }
         } else {
-            return (position / mGroupCapacity) * mGroupCapacity;
+            OrientationHelper orientationHelper = getOrientationHelper(layoutManager);
+            if (orientationHelper != null) {
+                int childCenter = orientationHelper.getDecoratedStart(view) + orientationHelper.getDecoratedMeasurement(view) / 2;
+                int startAfterPadding = orientationHelper.getStartAfterPadding();
+                if (childCenter < startAfterPadding) {
+                    return (position / mGroupCapacity + 1) * mGroupCapacity;
+                } else {
+                    return (position / mGroupCapacity) * mGroupCapacity;
+                }
+            }
         }
+        return (position / mGroupCapacity) * mGroupCapacity;
     }
 
-    private int getPagerStartPosition(RecyclerView.LayoutManager layoutManager, int targetPosition) {
-        if (targetPosition >= layoutManager.getItemCount()) {
-            return layoutManager.getItemCount() - 1;
+    private int getCurrentPagerStartPosition(RecyclerView.LayoutManager layoutManager, int targetPosition) {
+        if (targetPosition >= layoutManager.getItemCount() - 1) {
+            return (layoutManager.getItemCount() - 1) / mMainAxisSize * mMainAxisSize;
         }
         if (targetPosition < 0) {
             return 0;

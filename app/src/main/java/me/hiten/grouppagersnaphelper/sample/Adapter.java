@@ -2,6 +2,7 @@ package me.hiten.grouppagersnaphelper.sample;
 
 import android.support.annotation.NonNull;
 import android.support.v7.widget.RecyclerView;
+import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -36,6 +37,11 @@ public class Adapter extends RecyclerView.Adapter<Adapter.ViewHolder> {
     @Override
     public void onBindViewHolder(@NonNull ViewHolder viewHolder, int i) {
         String item = mData.get(i);
+        if (TextUtils.isEmpty(item)){
+            viewHolder.itemView.setVisibility(View.INVISIBLE);
+        }else {
+            viewHolder.itemView.setVisibility(View.VISIBLE);
+        }
         viewHolder.textView.setText(item);
     }
 
